@@ -3,19 +3,29 @@
 		connection: null,
 		id: 0,
 		registered_objs: {},
+		registered_srvs: {},
+		console: {
+			info: function() {},
+			warning: function() {},
+			error: function() {}
+		},
 
 		//constants
 		NOT_INITIALIZED: -1,
+		NOT_CONNECTED: -2,
+		CONNECTED: 2,
 		OK: 1,
 
 		PUBLISHER: 1,
 		SUBSCRIBER: 2,
-		SERVICE: 3,
-		
+		SERVICE_RESP: 3,
+
 		INFO:'info',
 		WARNING: 'warning',
 		ERROR: 'error', 
 		NONE: 'none',
+
+		status: NOT_CONNECTED,
 
 		init: function(ROS_MASTER_URI) {
 			if(!ROS_MASTER_URI)
@@ -23,10 +33,49 @@
 			alert(ROS_MASTER_URI);
 			this.connection = new WebSocket("ws://"+ROS_MASTER_URI);
 			this.connection.onmessage = rosjs.onMessage;
+
+			  this.socket.onerror = rosjs.onError;
+			  this.socket.onopen = rosjs.onOpen;
+			  this.socket.onclose = rosjs.onClose;
+			  
 		},
-		onMessage: function(incoming_message) {
-			alert(incoming_message);
-			console.log("Received:", incoming_message.data);
+		onError: function(event) {
+			rosjs.ROS_ERROR("rosjs error on websocket\n"+event);
+		},
+		onOpen: function(event) {
+			rosjs.status = CONNECTED;
+			rosjs.ROS_INFO("connect to ROS master\n"+event);
+		},
+		onClose: function(event) {
+			rosjs.status = NOT_CONNECTED;
+			rosjs.ROS_INFO("disconnect from ROS master\n"+event);
+		},
+		receiveMessage: function(event) {
+			rosjs.__log("received message");
+
+			msg = JSON.parse(event.data);
+
+			try {
+				switch(msg.op) {
+				case "set_level": rosjs.__set_level(msg.level); break;
+				case "status":
+					switch(msg.level) {
+					case rosjs.INFO: rosjs.console.info(msg.msg); break;
+					case rosjs.WARNING: rosjs.console.warning(msg.msg); break;
+					case rosjs.ERROR: rosjs.console.error(msg.msg); break;
+					default:
+						throw "unknown level for status ("+msg.level+")";
+					}
+					break;
+				case "publish": rosjs.__onPublish(msg); break;
+				case "service_response": rosjs.__onServiceResponse(msg); break;
+				default:
+					throw "unknown operation ("+msg.op+")";
+				}
+			}
+			catch(e) {
+				rosjs.ROS_ERROR("rosjs exception on receiveMessage: "+e);
+			}
 		},
 
 		__sendJSON: function(obj) {
@@ -38,11 +87,39 @@
 		__registerID: function(obj) {
 			registered_objs[obj.id] = obj;
 		},
-		
+		__registerIDSrv: function(id, cb) {
+			registered_srvs[id] = cb;
+		},
+		__onPublish: function(msg) {
+			if(registered_objs[msg.id].type!=rosjs.SUBSCRIBER)
+				throw "object did not subscribe";
+
+			try {
+				registered_objs[msg.id].callback(msg);
+			}
+			catch(e) {
+				rosjs.ROS_ERROR("rosjs exception on subscriber: "+e);
+			}
+
+		},
+		__onServiceResponse: function(msg) {
+			if(!registered_srvs[msg.id])
+				throw "object did not provide a service responce callback";
+
+			try {
+				registered_srvs[msg.id](msg);
+			}
+			catch(e) {
+				rosjs.ROS_ERROR("rosjs exception on service: "+e);
+			}
+			
+			delete registered_srvs[msg.id];
+		},
+
 		setStatusLevel: function(lvl) {
 			rosjs.__sendJSON({ op: 'set_level', level: lvl });
 		},
-		
+
 		ROS_ERROR: function(msg) {
 			rosjs.__sendJSON({ op: 'status', level: rosjs.ERROR, msg: msg });
 		},
@@ -89,7 +166,7 @@
 					message_type: message_type,
 					callback: callback,
 					options: options,
-					
+
 					id: rosjs.__getNextID(),
 					status: rosjs.NOT_INITIALIZED,
 					type: rosjs.SUBSCRIBER,
@@ -101,12 +178,12 @@
 								'type': this.message_type,
 								'id': this.id
 						};
-						
+
 						var add = ['throttle_rate','queue_length','fragment_size','compression'];
 						for (a in add)
 							if(this.options && this.options[a])
 								obj[a] =  this.options[a];
-						
+
 						rosjs.__sendJSON(obj);
 					},
 
@@ -117,6 +194,29 @@
 			rosjs.__registerID(r);
 
 			r.subscribe();
+
+			return r;
+		},
+
+		ServiceCall: function(service, callback, data, options)
+		{
+			var id = rosjs.__getNextID();
+			var obj = {
+					'op': 'call_service',
+					'service': this.topic_name,
+					'id': id
+			};
+			if(data) obj['msg'] = data;
+
+			var add = ['fragment_size','compression'];
+			for (a in add)
+				if(this.options && this.options[a])
+					obj[a] =  this.options[a];
+
+			rosjs.__sendJSON(obj);
+
+			rosjs.__registerIDSrv(r, callback);
+
 
 			return r;
 		}
