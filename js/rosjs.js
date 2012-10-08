@@ -34,10 +34,10 @@
 			this.connection = new WebSocket("ws://"+ROS_MASTER_URI);
 			this.connection.onmessage = rosjs.onMessage;
 
-			  this.socket.onerror = rosjs.onError;
-			  this.socket.onopen = rosjs.onOpen;
-			  this.socket.onclose = rosjs.onClose;
-			  
+			this.socket.onerror = rosjs.onError;
+			this.socket.onopen = rosjs.onOpen;
+			this.socket.onclose = rosjs.onClose;
+
 		},
 		onError: function(event) {
 			rosjs.ROS_ERROR("rosjs error on websocket\n"+event);
@@ -112,7 +112,7 @@
 			catch(e) {
 				rosjs.ROS_ERROR("rosjs exception on service: "+e);
 			}
-			
+
 			delete registered_srvs[msg.id];
 		},
 
@@ -216,10 +216,50 @@
 			rosjs.__sendJSON(obj);
 
 			rosjs.__registerIDSrv(r, callback);
+		},
 
+		ServiceProxy: function(service, options)
+		{
+			var id = rosjs.__getNextID();
+			var obj = {
+					'op': 'call_service',
+					'service': this.topic_name,
+					'id': id
+			};
+
+			var add = ['fragment_size','compression'];
+			for (a in add)
+				if(this.options && this.options[a])
+					obj[a] =  this.options[a];
+
+			var r = function() {
+				this.obj = obj;
+				this.done = false;
+				this.callback = function(data) {
+					this.data = data;
+					this.done = true;
+				};
+
+				rosjs.__sendJSON(obj);
+
+				/*waitforValue() {
+					var rv = do_request_to_database_server();
+				}
+				or {
+					hold(3000);
+					throw ("timeout in service call");
+				}*/
+				while(!this.done);
+				
+				return this.data;
+			};
+
+			rosjs.__registerIDSrv(r, r.callback);
 
 			return r;
-		}
+		},
+
+		nop: function() {}
 };
 
 rosjs.init();

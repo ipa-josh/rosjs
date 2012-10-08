@@ -1,8 +1,10 @@
 
 if(!rosjs.get_param) rosjs.get_param = function(name) {
+	return rosjs.ServiceProxy("/get_param")(name);
 };
 
 if(!rosjs.set_param) rosjs.set_param = function(name, value) {
+	rosjs.ServiceCall("/set_param", rosjs.nop, value);
 };
 
 
